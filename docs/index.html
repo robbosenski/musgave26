@@ -40,6 +40,22 @@ const coneR  = L.svg({pane:'conePane'});
 const videoR = L.svg({pane:'videoPane'});
 const photoR = L.svg({pane:'photoPane'});
 
+// fix-facing mode: click a photo dot to flip its cone 180°, collect the list
+let fixMode=false;
+const flipped=new Set();
+const coneLayers={};
+function drawCone(f){
+  if(coneLayers[f.name]) facing.removeLayer(coneLayers[f.name]);
+  coneLayers[f.name]=L.polygon(cone(f.lat,f.lon,f.dir),{renderer:coneR,interactive:false,
+    stroke:false,fillColor:'#ffcc00',fillOpacity:.12}).addTo(facing);
+}
+function toggleFlip(f){
+  f.dir=Math.round(((f.dir+180)%360)*10)/10;
+  flipped.has(f.name)?flipped.delete(f.name):flipped.add(f.name);
+  drawCone(f);
+  const out=document.getElementById('flipout'); if(out) out.value=[...flipped].sort().join(',');
+}
+
 // --- basemap (Esri World Imagery) ---
 const sat = L.tileLayer(
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -77,17 +93,19 @@ fetch('./data/media.json').then(r=>r.json()).then(items=>{
   items.forEach(f=>{
     pts.push([f.lat,f.lon]);
     if(f.type==='photo'){
-      const facingTxt = (f.dir!=null) ? `<br>Facing ~${f.dir}° (true N)` : '';
-      const html=`<div class="pv"><a href="${f.full}" target="_blank" rel="noopener">`+
-        `<img src="${f.thumb}" loading="lazy" alt=""></a>`+
-        `<div class="cap"><b>${esc(f.name)}</b><br>${esc(f.ts)}${facingTxt} · `+
-        `<a href="${f.full}" target="_blank" rel="noopener">full photo</a></div></div>`;
-      L.circleMarker([f.lat,f.lon],{renderer:photoR,radius:5,color:'#fff',weight:1,fillColor:'#ffcc00',fillOpacity:.95})
-        .bindPopup(html,{maxWidth:320}).addTo(photos);
-      if(f.dir!=null){
-        L.polygon(cone(f.lat,f.lon,f.dir),{renderer:coneR,interactive:false,stroke:false,
-          fillColor:'#ffcc00',fillOpacity:.12}).addTo(facing);
-      }
+      const photoHtml=()=>{
+        const facingTxt=(f.dir!=null)?`<br>Facing ~${f.dir}° (true N)`:'';
+        return `<div class="pv"><a href="${f.full}" target="_blank" rel="noopener">`+
+          `<img src="${f.thumb}" loading="lazy" alt=""></a>`+
+          `<div class="cap"><b>${esc(f.name)}</b><br>${esc(f.ts)}${facingTxt} · `+
+          `<a href="${f.full}" target="_blank" rel="noopener">full photo</a></div></div>`;
+      };
+      const pm=L.circleMarker([f.lat,f.lon],{renderer:photoR,radius:5,color:'#fff',weight:1,fillColor:'#ffcc00',fillOpacity:.95}).addTo(photos);
+      pm.on('click',()=>{
+        if(fixMode && f.dir!=null) toggleFlip(f);
+        else L.popup({maxWidth:320}).setLatLng([f.lat,f.lon]).setContent(photoHtml()).openOn(map);
+      });
+      if(f.dir!=null) drawCone(f);
     }else{
       const html=`<div class="pv"><video controls playsinline preload="none" poster="${f.thumb}">`+
         `<source src="${f.full}" type="video/mp4"></video>`+
@@ -123,9 +141,15 @@ info.onAdd=function(){
       <label><span class="sw" style="background:#e5484d"></span> Videos (play inline)</label>
       <label><span class="sw" style="background:#22d3ee;border-radius:2px"></span> GPS track</label>
     </div>
-    <div class="muted" style="margin-top:6px">Toggle layers, top-right list.</div>`;
+    <label style="margin-top:8px;border-top:1px solid #ffffff22;padding-top:6px">
+      <input type="checkbox" id="fix"> Fix-facing mode</label>
+    <div class="muted">On → click a wrong cone's dot to flip it, then send me this list:</div>
+    <textarea id="flipout" readonly placeholder="(flipped filenames appear here)"
+      style="width:100%;height:38px;font:11px monospace;margin-top:4px;box-sizing:border-box"></textarea>`;
   L.DomEvent.disableClickPropagation(d);
   d.querySelector('#op').addEventListener('input',e=>plan.setOpacity(+e.target.value));
+  d.querySelector('#fix').addEventListener('change',e=>{
+    fixMode=e.target.checked; map.getContainer().style.cursor=fixMode?'crosshair':'';});
   return d;
 };
 info.addTo(map);
