@@ -23,8 +23,10 @@
   .sw{width:12px;height:12px;border-radius:50%;display:inline-block;border:1px solid #0006}
   .muted{color:#aaa;font-size:11px}
   .pdot{width:11px;height:11px;border-radius:50%;background:#ffcc00;border:1.5px solid #fff;box-shadow:0 0 2px #0007}
+  .vdot{width:13px;height:13px;border-radius:50%;background:#e5484d;border:1.5px solid #fff;box-shadow:0 0 2px #0007}
   .pcl{width:30px;height:30px;border-radius:50%;background:rgba(255,204,0,.92);border:2px solid #fff;
        display:flex;align-items:center;justify-content:center;font:bold 12px system-ui;color:#222;box-shadow:0 0 4px #0007}
+  .pcl.vcl{background:rgba(229,72,77,.92);color:#fff}
 </style>
 </head>
 <body>
@@ -47,9 +49,18 @@ const videoR = L.svg({pane:'videoPane'});
 const photoR = L.svg({pane:'photoPane'});
 
 // fix-facing mode: click a photo dot to flip its cone 180°, collect the list
-let fixMode=false;
+let fixMode=false, moveMode=false;
 const flipped=new Set();
+const moved=new Map();          // name -> [lat,lon] for dragged markers
+const markerList=[];            // {marker,f} for all media markers
 const coneLayers={};
+function setDrag(on){
+  moveMode=on;
+  markerList.forEach(({marker})=>{
+    marker.options.draggable=on;
+    if(marker.dragging){ on?marker.dragging.enable():marker.dragging.disable(); }
+  });
+}
 function drawCone(f){
   if(coneLayers[f.name]) facing.removeLayer(coneLayers[f.name]);
   coneLayers[f.name]=L.polygon(cone(f.lat,f.lon,f.dir),{renderer:coneR,interactive:false,
@@ -75,11 +86,16 @@ const plan = L.imageOverlay('./overlay/siteplan.jpg', OVERLAY_BOUNDS, {opacity:0
 
 // --- layer groups ---
 const PHOTO_ICON = L.divIcon({className:'',iconSize:[13,13],iconAnchor:[6.5,6.5],html:'<div class="pdot"></div>'});
-const photos = L.markerClusterGroup({
+const VIDEO_ICON = L.divIcon({className:'',iconSize:[15,15],iconAnchor:[7.5,7.5],html:'<div class="vdot"></div>'});
+// one cluster group for photos AND videos, so co-located ones group together
+const media = L.markerClusterGroup({
   maxClusterRadius:24, showCoverageOnHover:false, spiderfyDistanceMultiplier:1.8,
-  iconCreateFunction:c=>L.divIcon({className:'',iconSize:[30,30],html:`<div class="pcl">${c.getChildCount()}</div>`})
+  iconCreateFunction:c=>{
+    const allVid=c.getAllChildMarkers().every(m=>m.options.mediaType==='video');
+    return L.divIcon({className:'',iconSize:[30,30],html:`<div class="pcl${allVid?' vcl':''}">${c.getChildCount()}</div>`});
+  }
 }).addTo(map);
-const videos = L.layerGroup().addTo(map);
+media.on('spiderfied', e=>{ if(moveMode) e.markers.forEach(m=>m.dragging&&m.dragging.enable()); });
 const facing = L.layerGroup();   // camera view cones (off by default)
 const track  = L.layerGroup().addTo(map);
 
@@ -102,28 +118,38 @@ fetch('./data/media.json').then(r=>r.json()).then(items=>{
   const pts=[];
   items.forEach(f=>{
     pts.push([f.lat,f.lon]);
-    if(f.type==='photo'){
-      const photoHtml=()=>{
+    const isPhoto = f.type==='photo';
+    const contentHtml=()=>{
+      if(isPhoto){
         const facingTxt=(f.dir!=null)?`<br>Facing ~${f.dir}° (true N)`:'';
         return `<div class="pv"><a href="${f.full}" target="_blank" rel="noopener">`+
           `<img src="${f.thumb}" loading="lazy" alt=""></a>`+
           `<div class="cap"><b>${esc(f.name)}</b><br>${esc(f.ts)}${facingTxt} · `+
           `<a href="${f.full}" target="_blank" rel="noopener">full photo</a></div></div>`;
-      };
-      const pm=L.marker([f.lat,f.lon],{icon:PHOTO_ICON}).addTo(photos);
-      pm.on('click',()=>{
-        if(fixMode && f.dir!=null) toggleFlip(f);
-        else L.popup({maxWidth:320}).setLatLng([f.lat,f.lon]).setContent(photoHtml()).openOn(map);
-      });
-      if(f.dir!=null) drawCone(f);
-    }else{
-      const html=`<div class="pv"><video controls playsinline preload="none" poster="${f.thumb}">`+
+      }
+      return `<div class="pv"><video controls playsinline preload="none" poster="${f.thumb}">`+
         `<source src="${f.full}" type="video/mp4"></video>`+
         `<div class="cap"><b>${esc(f.name)}</b><br>${esc(f.ts)} · `+
         `<a href="${f.full}" target="_blank" rel="noopener">open / download</a></div></div>`;
-      L.circleMarker([f.lat,f.lon],{renderer:videoR,radius:6,color:'#fff',weight:1,fillColor:'#e5484d',fillOpacity:.95})
-        .bindPopup(html,{maxWidth:340,minWidth:300}).addTo(videos);
-    }
+    };
+    const m=L.marker([f.lat,f.lon],{icon:isPhoto?PHOTO_ICON:VIDEO_ICON,draggable:false});
+    m.options.mediaType=f.type;
+    m.on('click',()=>{
+      if(!moveMode && fixMode && isPhoto && f.dir!=null) toggleFlip(f);
+      else if(!moveMode) L.popup({maxWidth:340,minWidth:isPhoto?0:300}).setLatLng(m.getLatLng()).setContent(contentHtml()).openOn(map);
+    });
+    m.on('dragend',()=>{
+      const ll=m.getLatLng();
+      f.lat=Math.round(ll.lat*1e6)/1e6; f.lon=Math.round(ll.lng*1e6)/1e6;
+      if(isPhoto && f.dir!=null) drawCone(f);   // cone follows the point
+      moved.set(f.name,[f.lat,f.lon]);
+      const out=document.getElementById('moveout');
+      if(out) out.value=[...moved].map(([n,c])=>`${n},${c[0]},${c[1]}`).join('\n');
+      media.refreshClusters(m);
+    });
+    m.addTo(media);
+    markerList.push({marker:m,f});
+    if(isPhoto && f.dir!=null) drawCone(f);
   });
   if(pts.length) map.fitBounds(pts,{padding:[40,40]});
   else map.fitBounds(OVERLAY_BOUNDS);
@@ -136,7 +162,7 @@ fetch('./data/track.geojson').then(r=>r.json()).then(gj=>{
 // --- Leaflet layer control ---
 L.control.layers(
   {'Satellite':sat},
-  {'Place labels':labels,'Site plan':plan,'Photos':photos,'Facing (view cones)':facing,'Videos':videos,'GPS track':track},
+  {'Place labels':labels,'Site plan':plan,'Photos & videos':media,'Facing (view cones)':facing,'GPS track':track},
   {collapsed:false}
 ).addTo(map);
 
@@ -155,11 +181,17 @@ info.onAdd=function(){
       <input type="checkbox" id="fix"> Fix-facing mode</label>
     <div class="muted">On → click a wrong cone's dot to flip it, then send me this list:</div>
     <textarea id="flipout" readonly placeholder="(flipped filenames appear here)"
-      style="width:100%;height:38px;font:11px monospace;margin-top:4px;box-sizing:border-box"></textarea>`;
+      style="width:100%;height:34px;font:11px monospace;margin-top:4px;box-sizing:border-box"></textarea>
+    <label style="margin-top:8px;border-top:1px solid #ffffff22;padding-top:6px">
+      <input type="checkbox" id="move"> Move mode</label>
+    <div class="muted">On → drag a wrong dot to its spot, then send me this list:</div>
+    <textarea id="moveout" readonly placeholder="(moved filename,lat,lon appear here)"
+      style="width:100%;height:40px;font:11px monospace;margin-top:4px;box-sizing:border-box"></textarea>`;
   L.DomEvent.disableClickPropagation(d);
   d.querySelector('#op').addEventListener('input',e=>plan.setOpacity(+e.target.value));
   d.querySelector('#fix').addEventListener('change',e=>{
     fixMode=e.target.checked; map.getContainer().style.cursor=fixMode?'crosshair':'';});
+  d.querySelector('#move').addEventListener('change',e=>setDrag(e.target.checked));
   return d;
 };
 info.addTo(map);
