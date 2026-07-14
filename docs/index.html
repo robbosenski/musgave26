@@ -15,8 +15,8 @@
   .pv video,.pv img{display:block;border-radius:6px;max-width:300px;width:100%;background:#000}
   .cap{margin-top:6px;font:12px/1.35 system-ui;color:#333;word-break:break-word}
   .cap a{color:#1a6dd6}
-  .ctl{background:rgba(28,28,30,.92);color:#eee;padding:10px 12px;border-radius:8px;
-       font:13px/1.4 system-ui;box-shadow:0 1px 6px rgba(0,0,0,.4);min-width:180px}
+  .ctl{background:rgba(28,28,30,.92);color:#eee;padding:8px 10px;border-radius:8px;
+       font:12px/1.35 system-ui;box-shadow:0 1px 6px rgba(0,0,0,.4);width:150px}
   .ctl h4{margin:0 0 6px;font-size:13px;font-weight:600}
   .ctl label{display:flex;align-items:center;gap:6px;margin:3px 0;cursor:pointer}
   .ctl input[type=range]{width:100%}
@@ -80,7 +80,7 @@ const photos = L.markerClusterGroup({
   iconCreateFunction:c=>L.divIcon({className:'',iconSize:[30,30],html:`<div class="pcl">${c.getChildCount()}</div>`})
 }).addTo(map);
 const videos = L.layerGroup().addTo(map);
-const facing = L.layerGroup().addTo(map);   // camera view cones
+const facing = L.layerGroup();   // camera view cones (off by default)
 const track  = L.layerGroup().addTo(map);
 
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
